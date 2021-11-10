@@ -7,6 +7,10 @@
 #include <QByteArray>
 #include <QString>
 
+
+///Для теста gita
+///
+///
 class Server : public QTcpServer
 {
     Q_OBJECT
