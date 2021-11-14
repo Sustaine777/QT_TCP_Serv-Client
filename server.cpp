@@ -16,7 +16,7 @@ Server::Server(QObject *parent) : QTcpServer(parent)
 {
     pTcpServer = new QTcpServer(this);
     pTcpSocket = nullptr;
-    if (pTcpServer->listen(QHostAddress("192.168.145.1"), 13303)) qDebug() << "listen";
+    if (pTcpServer->listen(QHostAddress::LocalHost, 13303)) qDebug() << "listen";
     else qDebug() << "error listen";
     connect(pTcpServer, SIGNAL(newConnection()), this, SLOT(processingRequest()));
 }
@@ -92,7 +92,7 @@ Client::Client(QObject *parent) : QObject(parent)
 {
     pTcpSocket = new QTcpSocket(this);
     ///if (pTcpSocket->bind(QHostAddress::LocalHost)) qDebug() <<"binded"; ///Нужно ли? На какой адрес/порт
-    pTcpSocket->connectToHost("192.168.145.1", 13303);///Тут нужно на другой адрес  ///(192.168.1.110) //Какой порт - узнать?QHostAddress::LocalHost
+    pTcpSocket->connectToHost(QHostAddress::LocalHost, 13303);///Тут нужно на другой адрес  ///(192.168.1.110) //Какой порт - узнать?QHostAddress::LocalHost
     connect(pTcpSocket, &QTcpSocket::connected, this, [&](){
        pTcpSocket->write("hello from client");
 
