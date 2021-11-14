@@ -19,6 +19,8 @@ Server::Server(QObject *parent) : QTcpServer(parent)
     if (pTcpServer->listen(QHostAddress::LocalHost, 13303)) qDebug() << "listen";
     else qDebug() << "error listen";
     connect(pTcpServer, SIGNAL(newConnection()), this, SLOT(processingRequest()));
+
+    ///Testtesttest
 }
 
 void Server::processingRequest()
