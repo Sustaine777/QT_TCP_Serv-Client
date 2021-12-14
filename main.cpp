@@ -9,10 +9,8 @@ extern LTCPThread LTCPT;
 int main(int argc, char *argv[])
 {
     QCoreApplication a(argc, argv);
-
     s = new Server;
     RTCPT.start();
-    //d = new Client(0);
-    //d = new Client;
+    //LTCPT.start();
     return a.exec();
 }

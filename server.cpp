@@ -4,6 +4,7 @@
 #include <QByteArray>
 #include <QtEndian>
 
+registration_messages reg_mes;
 request_command req_com;
 info_command inf_com;
 ping_command ping_com;
@@ -16,8 +17,8 @@ LTCPThread LTCPT;
 Client *c;
 Client *b;
 
-
-QUuid trueclientId = QUuid(0xefd339e0,0xa36d,0x4784,0x81,0xf2,0xb4,0xca,0xe6,0x39,0x58,0x93); ///Нужно отдельно для левой и правой руки
+QUuid rightManId = QUuid(0xefd339e0,0xa36d,0x4784,0x81,0xf2,0xb4,0xca,0xe6,0x39,0x58,0x93);
+QUuid leftManId = QUuid(0xace519c0,0xa56f,0x1588,0x82,0xd2,0xb3,0xcd,0xe7,0x38,0x58,0x92);
 
 Server::Server(QObject *parent) : QTcpServer(parent)
 {
@@ -35,19 +36,23 @@ void Server::processingRequest()
     pTcpSocket = pTcpServer->nextPendingConnection();
     connect(pTcpSocket, SIGNAL(readyRead()), SLOT(readyRead()));
     connect(pTcpSocket, &QTcpSocket::disconnected, pTcpSocket, &QTcpSocket::deleteLater);
-    pTcpSocket->write((char*)&req_com,sizeof(req_com));
+
+    pingReg = false;
 
     QTimer *timer = new QTimer(this);
     connect(timer, SIGNAL(timeout()), this, SLOT(timeping()));
-    timer->start(1000);
+    timer->start(5000);
+
 
     QTimer *timer_1 = new QTimer (this);
     connect(timer_1, SIGNAL(timeout()), this, SLOT(timecheck()));
-    timer_1->start(1000);
+    timer_1->start(2000);
+
 
     QTimer *timer_2 = new QTimer (this);
     connect(timer_2, SIGNAL(timeout()), this, SLOT(joy()));
     timer_2->start(500);
+
 }
 
 void Server::readyRead()
@@ -56,46 +61,50 @@ void Server::readyRead()
     ba = pTcpSocket->readAll();
     //qDebug() << ba;
     //Проверка на UUID.
-    ///Можно ли так делать (перегонять uuid в ByteArray и обратно)?
-    if ((ba[0] == char(0x10))&&(ba[1] == char(0x00))){
-        ba.remove(2,2);
-        if ((ba[2] == char(0x00))&&(ba[3] == char(0x00)))
+    if ((ba[0] == char(0x10))&&(ba[1] == char(0x00))&&(ba[2] == char(0x00))&&(ba[3] == char(0x00))){
+        if ((ba[4] == char(0x00))&&(ba[5] == char(0x00)))
         {
-            ba.remove(0, 4);
-            qDebug() << ba;
-            QUuid clientId = QUuid(ba);
-            if (clientId == trueclientId) correctId = true;
-            else correctId = false;
+            pingReg = true;
+            noID = false;
+            checkRegInfo(ba);
+            sendAnswer();
         }
     }
-    //Проверка на ping
-    if ((ba[0] == char(0x00))&&(ba[1] == char(0x00))){
-        ba.remove(2,2);
-        if ((ba[2] == char(0x02))&&(ba[3] == char(0x00))) pingyes = true;
-        else pingyes = false;
-    }
-
 
 }
 
+void Server::checkRegInfo(QByteArray ba){
+    ba.remove(0, 6);
+    qDebug() << ba;
+    QUuid clientId = QUuid(ba);
+    if (clientId == rightManId) {correctId = true; qDebug() << "server::IDchecked";}
+    else {correctId = false; qDebug() << "server::IDwrong";}
+}
+
+void Server::sendAnswer(){
+    if (correctId) reg_mes.packetType = 0x0003;
+    if (!correctId) reg_mes.packetType = 0x0005;
+    if (noID) reg_mes.packetType = 0x0004;
+    pTcpSocket->write((char*)&reg_mes,sizeof(reg_mes));
+}
+
+
 void Server::timeping(){
-    pTcpSocket->write((char*)&ping_com,sizeof(ping_com));
+    //pTcpSocket->write((char*)&ping_com,sizeof(ping_com));
 }
 
 void Server::timecheck(){
-    qDebug() << "im in server timecheck";
-    if (pingyes) {qDebug() <<"allgood";
-        pingyes = false;}
-    else qDebug() <<"allbad";
+    if (pingReg) {noID = false;}
+    else  {noID = true;}
 }
 
 void Server::joy(){
-    pTcpSocket->write((char*)&cont_com,sizeof(cont_com));
+    //\pTcpSocket->write((char*)&cont_com,sizeof(cont_com));
 }
 
 Server::~Server()
 {
-    //pTcpSocket->close(); ///Нужно ли?
+
 }
 
 //Client class
@@ -104,74 +113,87 @@ bool RTCPTimeExpired = true;
 
 Client::Client(int a)
 {
+    qDebug() << "New client";
     pTcpSocket = new QTcpSocket(this);
-    qDebug() << "client up";
-    ///if (pTcpSocket->bind(QHostAddress::LocalHost)) qDebug() <<"binded"; ///Нужно ли? На какой адрес/порт
     whichUUID = a;
     newConnection();
     connect(pTcpSocket, SIGNAL(readyRead()), SLOT(readyRead()));
 }
 
 void Client::newConnection(){
-    qDebug() << "newConnection";
-    //qDebug() <<  whichUUID;
+    qDebug() << "New connection";
     pTcpSocket->abort();
-    //pTcpSocket->connectToHost(QHostAddress("192.168.8.21"), 8400);///Тут нужно на другой адрес  ///(192.168.1.110) //Какой порт - узнать?QHostAddress::LocalHost
+    //pTcpSocket->connectToHost(QHostAddress("192.168.8.21"), 8400);
     pTcpSocket->connectToHost(QHostAddress::LocalHost, 13303);
+    connect(pTcpSocket, &QTcpSocket::connected, this, &Client::sendInfo);
     connect(pTcpSocket, &QTcpSocket::connected, this, [&](){
-       qDebug() <<"connected";
+
+        /*
        //Таймер для отправки своего пинга для проверки
        QTimer *timer = new QTimer(this);
        connect(timer, SIGNAL(timeout()), this, SLOT(timeping()));
        timer->start(900);
+       */
 
-       //Таймер для приема пинга от сервера
+       //Таймер для проверки наличия данных от сервера
        QTimer *timer_1 = new QTimer (this);
        connect(timer_1, SIGNAL(timeout()), this, SLOT(timecheck()));
-       timer_1->start(1100);
+       timer_1->start(5000);
        });
 }
 
-void Client::readyRead(){
-    if (whichUUID ) RTCPTimeExpired = false;
-    else LTCPTimeExpired = false;
+void Client::sendInfo(){
+    pingyes = true;
+    QUuid clientId;
+    if (whichUUID == 1)//ВМ - Правый
+    clientId = rightManId;
+    else clientId = leftManId;
+    QByteArray bclientId = clientId.toByteArray();
+    QByteArray sendba;
+    sendba.insert(0,(char*)&inf_com,sizeof(inf_com));
+    sendba = sendba + bclientId;
+    //sendba = qToLittleEndian(sendba);
+    pTcpSocket->write(sendba);
+}
 
+void Client::readyRead(){
+    pingyes = true;
+    //if (whichUUID) RTCPTimeExpired = false;
+    //else LTCPTimeExpired = false;
     QByteArray ba;
     ba = pTcpSocket->readAll();
+
+    /*
     //Проверка на соединение
-    if ((ba[0] == char(0x10))&&(ba[1] == char(0x00))){
-        ba.remove(2,2);
-        if ((ba[2] == char(0x01))&&(ba[3] == char(0x00)))
+    if ((ba[0] == char(0x10))&&(ba[1] == char(0x00))&&(ba[2] == char(0x00))&&(ba[3] == char(0x00))){
+        if ((ba[4] == char(0x01))&&(ba[5] == char(0x00)))
         {
-            QUuid clientId;
-            if (whichUUID == 1)//ВМ - Правый
-            clientId = QUuid(0xefd339e0,0xa36d,0x4784,0x81,0xf2,0xb4,0xca,0xe6,0x39,0x58,0x93);
-            else clientId = QUuid(0xace519c0,0xa56f,0x1588,0x82,0xd2,0xb3,0xcd,0xe7,0x38,0x58,0x92);
-            QByteArray bclientId = clientId.toByteArray();
-            //qDebug() << bclientId;
-            QByteArray sendba;
-            sendba.insert(0,(char*)&inf_com,sizeof(inf_com));
-            sendba = sendba + bclientId;
-            sendba = qToLittleEndian(sendba); ///Сработает ли?
-            pTcpSocket->write(sendba);
+
         }
     }
+    */
 
     //Проверка на ping
-    if ((ba[0] == char(0x00))&&(ba[1] == char(0x00))){
-        ba.remove(2,2);
-        if ((ba[2] == char(0x02))&&(ba[3] == char(0x00))) pingyes = true;
-        else pingyes = false;
+    if ((ba[0] == char(0x00))&&(ba[1] == char(0x00))&&(ba[2] == char(0x00))&&(ba[3] == char(0x00))){
+        if ((ba[4] == char(0x02))&&(ba[5] == char(0x00))) {pingyes = true; qDebug() << "PING RECEIVED";}
+    }
+
+    //Ответ на запрос о регистрации
+    if ((ba[0] == char(0x00))&&(ba[1] == char(0x00))&&(ba[2] == char(0x00))&&(ba[3] == char(0x00))){
+        if ((ba[4] == char(0x03))&&(ba[5] == char(0x00))) {pingyes = true; qDebug() << "REG.SUCCESS";}
+        else if ((ba[4] == char(0x04))&&(ba[5] == char(0x00))) {pingyes = false; errorCode = 4; qDebug() << "REG.ERROR:NO ID";}
+        else if ((ba[4] == char(0x05))&&(ba[5] == char(0x00))) {pingyes = false; errorCode = 5; qDebug() << "REG.ERROR:WRONG ID";}
+        else if ((ba[4] == char(0x06))&&(ba[5] == char(0x00))) {pingyes = false; errorCode = 6; qDebug() << "REG.ERROR:TOO MUCH CONNECTIONS";}
+        else if ((ba[4] == char(0x07))&&(ba[5] == char(0x00))) {pingyes = false; errorCode = 7; qDebug() << "REG.ERROR:WAIT TIME EXPIRED";}
     }
 
     //Данные с джойстика
-    if ((ba[0] == char(0x0e))&&(ba[1] == char(0x00))){
-        ba.remove(2,2);
-        if ((ba[2] == char(0x3b))&&(ba[3] == char(0x01)))
+    if ((ba[0] == char(0x0c))&&(ba[1] == char(0x00))&&(ba[2] == char(0x00))&&(ba[3] == char(0x00))){
+        if ((ba[4] == char(0x5f))&&(ba[5] == char(0x00)))
         {
+            qDebug() << "JOYDATA RECEIVED";
             if (whichUUID == 1){
                 byteSort(RTCPJoy, ba);
-                //qDebug() << RTCPJoy.X;
                 rJoyPack();
             }
             else {
@@ -180,20 +202,27 @@ void Client::readyRead(){
             }
         }
     }
+
 }
 
-void Client::byteSort(TCPJoyStruct &Joy, QByteArray &ba){
-    ba.remove(0, 4);
+void Client::byteSort(TCPJoyStruct &Joy, QByteArray ba){
+    ba.remove(0, 6);
     for (int i=0; i<6; i++){
         switch (i){
         case 0:
-            Joy.X = ((unsigned short)ba[1] << 8) | (unsigned char)ba[0];
+            Joy.X = ((unsigned short)ba[1] << 8) | ba[0];
+            //qDebug() << "Joy.X";
+            //qDebug() << Joy.X;
             break;
         case 1:
-            Joy.Y = ((unsigned short)ba[1] << 8) | (unsigned char)ba[0];
+            Joy.Y = ((unsigned short)ba[1] << 8) | ba[0];
+            //qDebug() << "Joy.Y";
+            //qDebug() << Joy.Y;
             break;
         case 2:
-            Joy.Z = ((unsigned short)ba[1] << 8) | (unsigned char)ba[0];
+            Joy.Z = ((unsigned short)ba[1] << 8) | ba[0];
+            //qDebug() << "Joy.Z";
+            //qDebug() << Joy.Z;
             break;
         case 3:
             //yStickOffset
@@ -202,7 +231,6 @@ void Client::byteSort(TCPJoyStruct &Joy, QByteArray &ba){
             //registers
             Joy.buttons = (unsigned char)ba[0] + ((unsigned char)ba[1] << 8);
             Joy.buttonsF = (unsigned char)ba[2] + ((unsigned char)ba[3] << 8);
-            ///Байт читается справа налево? Нужно задать вопрос
             break;
         case 5:
             break;
@@ -321,20 +349,21 @@ void Client::lJoyPack(){
 }
 
 void Client::timeping(){
+    /*
     ping_com = qToLittleEndian(ping_com); ///Сработает ли?
     pTcpSocket->write((char*)&ping_com,sizeof(ping_com));
+    */
 }
 
 void Client::timecheck(){
-    qDebug() << "im in client timecheck";
-    if (pingyes) {qDebug() <<"allgood";
+    if (pingyes) {
         pingyes = false;
         if (whichUUID ) RTCPTimeExpired = false;
         else LTCPTimeExpired = false;
     }
-    else {qDebug() <<"allbad";
-        if (whichUUID ) RTCPTimeExpired = false;
-        else LTCPTimeExpired = false;
+    else {
+        if (whichUUID ) RTCPTimeExpired = true;
+        else LTCPTimeExpired = true;
     }
 }
 
@@ -355,7 +384,7 @@ void RTCPThread::run()
     makeNewClient();//Возможно можно оставить вызов только через таймер
     QTimer *timer = new QTimer(this);
     connect(timer, SIGNAL(timeout()), this, SLOT(waitTimeExpired()));
-    timer->start(5000);
+    timer->start(7000);
     exec();
 }
 
@@ -366,14 +395,15 @@ void RTCPThread::makeNewClient()
 
 void RTCPThread::waitTimeExpired(){
     if (RTCPTimeExpired){
-    std::destroy_at(c);
+    delete c;
+    qDebug() << "RIGHT CLIENT KILLED";
     makeNewClient();
     }
 }
 
 void RTCPThread::stop()
 {
-    std::destroy_at(c);
+    delete c;
 }
 
 LTCPThread::LTCPThread() : QThread( 0 )
@@ -387,7 +417,7 @@ void LTCPThread::run()
     makeNewClient();//Возможно можно оставить вызов только через таймер
     QTimer *timer = new QTimer(this);
     connect(timer, SIGNAL(timeout()), this, SLOT(waitTimeExpired()));
-    timer->start(5000);
+    timer->start(7000);
     exec();
 }
 
@@ -398,14 +428,15 @@ void LTCPThread::makeNewClient()
 
 void LTCPThread::waitTimeExpired(){
     if (LTCPTimeExpired){
-    std::destroy_at(b);
+    delete b;
+    qDebug() << "LEFT CLIENT KILLED";
     makeNewClient();
     }
 }
 
 void LTCPThread::stop()
 {
-    std::destroy_at(b);
+    delete b;
 }
 
 
